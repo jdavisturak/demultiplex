@@ -29,7 +29,7 @@ import os
 import sys
 import glob
 from optparse import OptionParser
-from demultiplex_harry_edit import *
+from demultiplex import *
 
 def main(run_name, target_name, do_fail=False, outdir=None):
     assert os.path.exists(target_name)
@@ -49,36 +49,42 @@ def main(run_name, target_name, do_fail=False, outdir=None):
                 assert os.path.isdir(fail_dir)
     else:
         fail_dir = None
-    samples, barcodes, lane_nums = read_targets(filename=target_name)
+    samples, barcodes, barcodes2, lane_nums = read_targets(filename=target_name)
     for lane_num in list(set(lane_nums)):
         lane_prefix = "s_%s" % lane_num
         out_prefix = run_name
-        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes)
+        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2)
 
-def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes):
+def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2):
+    bc_len = len(barcodes[0])
+    bc2_len = len(barcodes2[0])
     qseq_files = glob.glob("%s_*qseq.txt" % lane_prefix)
-    one_files, two_files, bc_files = _split_paired(qseq_files)
+    one_files, two_files, bc_files, bc2_files = _split_paired(qseq_files)
     is_paired = len(two_files) > 0
+    is_double_bc = len(bc2_files) > 0
     out_files = (_get_outfiles(out_prefix, outdir, is_paired, samples)
                  if not fail_dir else None)
     fail_files = (_get_outfiles(out_prefix, fail_dir, is_paired, samples)
                   if fail_dir else None)
-    bc_dict = create_barcode_dictionary(barcodes)
+    bc_map = create_barcode_map(barcodes,barcodes2)
     if not fail_files:
         ambig_seqs = open("ambiguous_seqs.fastq","w")
+	ambig_seqs2 = open("ambiguous_seqs2.fastq","w")
         ambig_bcs = open("ambiguous_bcs.fastq","w")
     else:
         ambig_seqs = open("failed_ambig_seqs.fastq","w")
+	ambig_seqs2 = open("ambiguous_seqs2.fastq","w")
         ambig_bcs = open("failed_ambig_bcs.fastq","w")
     for (num, files) in [("1", one_files), ("2", two_files)]:
         for i, fname in enumerate(files):
-            bc_file = _get_associated_barcode(num, i, fname, bc_files)
-            convert_qseq_to_fastq(fname, num, bc_file, out_files, bc_dict, ambig_seqs, ambig_bcs, fail_files)
+            bc_file = _get_associated_barcode(i, fname, bc_files, is_double_bc)
+	    bc2_file = _get_associated_barcode(i ,fname, bc2_files, is_double_bc)
+            convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len,  fail_files)
 
-def _get_associated_barcode(read_num, file_num, fname, bc_files):
+def _get_associated_barcode(file_num, fname, bc_files):
     """Get barcodes for the first read if present.
     """
-    if read_num == "1" and len(bc_files) > 0:
+    if len(bc_files) > 0:
         bc_file = bc_files[file_num]
         bc_parts = bc_file.split("_")
         read_parts = fname.split("_")
@@ -87,29 +93,40 @@ def _get_associated_barcode(read_num, file_num, fname, bc_files):
         return bc_file
     return None
 
-def convert_qseq_to_fastq(fname, num, bc_file, out_files, bc_dict, ambig_seqs, ambig_bcs, fail_files=None):
+def convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len, fail_files=None):
     """Convert a qseq file into the appropriate fastq output.
     """
     bc_iterator = _qseq_iterator(bc_file, fail_files is None) if bc_file else None
+    bc2_iterator = _qseq_iterator(bc2_file, fail_files is None) if bc2_file else None
     for basename, seq, qual, passed in _qseq_iterator(fname, fail_files is None):
         # if we have barcodes, add them to the 3' end of the sequence
         if bc_iterator:
-            (_, bc_seq, bc_qual, _) = bc_iterator.next()    
+            (_, bc_seq, _, _) = bc_iterator.next()
+	bc2_seq = []
+	if bc2_iterator:
+	    (_, bc2_seq, _, _) = bc2_iterator.next()
+	    full_seq = "%s\t%s" % (bc_seq[0:bc_len], bc2_seq[0:bc2_len])
         name = "%s/%s" % (basename, num)
         out = "@%s\n%s\n+\n%s\n" % (name, seq, qual)
-        if passed:
-            if not bc_dict[bc_seq[0:6]]==[]:
-                out_files[num][bc_dict[bc_seq[0:6]]].write(out)
+	my_index = get_sample_index(bc_seq[0:bc_len], bc2_seq[0:bc2_len], bc_map)       
+	if passed:
+            if not my_index ==[]:
+                out_files[num][my_index].write(out)
             elif not fail_files:
-                ambig_seqs.write(out)
-                ambig_bcs.write(bc_seq[0:6]+"\n")
+		if num = "1"
+                	ambig_seqs.write(out)
+			ambig_bcs.write(full_seq+"\n")
+		elif num = "2"
+			ambig_seqs2.write(out)
         elif fail_files:
-            if not bc_dict[bc_seq[0:6]] == []:
-                fail_files[num][bc_dict[bc_seq[0:6]]].write(out)
+            if not my_index == []:
+                fail_files[num][my_index].write(out)
             else:
-                ambig_seqs.write(out)
-                ambig_bcs.write(bc_seq[0:6]+"\n")
-
+                if num = "1"
+                	ambig_seqs.write(out)
+			ambig_bcs.write(full_seq+"\n")
+		elif num = "2"
+			ambig_seqs2.write(out)
 
 def _qseq_iterator(fname, pass_wanted):
     """Return the name, sequence, quality, and pass info of qseq reads.
@@ -156,6 +173,7 @@ def _split_paired(files):
     one = []
     two = []
     bcs = []
+    bcs2 = []
     ref_size = None
     for f in files:
         parts = f.split("_")
@@ -171,15 +189,24 @@ def _split_paired(files):
             else:
                 two.append(f)
         elif parts[2] == "3":
-            two.append(f)
+	    cur_size = _get_qseq_seq_size(f)
+	    assert ref_size is not None
+	    if cur_size < ref_size:
+		bcs2.append(f)
+	    else:
+		two.append(f)
+	elif parts[2] == "4":
+	    two.append(f)
         else:
             raise ValueError("Unexpected part: %s" % f)
     one.sort()
     two.sort()
     bcs.sort()
+    bcs2.sort()
     if len(two) > 0: assert len(two) == len(one)
     if len(bcs) > 0: assert len(bcs) == len(one)
-    return one, two, bcs
+    if len(bcs2) > 0: assert len(bcs2) == len(one)
+    return one, two, bcs, bcs2
 
 def _get_qseq_seq_size(fname):
     with open(fname) as in_handle:

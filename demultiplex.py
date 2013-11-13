@@ -45,7 +45,9 @@ def read_targets(filename='targets.txt',samples_name='Sample', barcodes_name='Ba
     samples.append(row['Sample'])
     barcodes.append(row['Barcode'])
     lanes.append(row['Lane'])
-  
+
+  assert all(len(x) == len(barcodes[0] for x in barcodes)
+
   return(samples,barcodes,lanes)
 
 
