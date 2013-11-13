@@ -87,6 +87,24 @@ def create_barcode_dictionary(barcodes, max_distance=2, num=6):
   return Map
   
   
+def samples_map(barcodes1,barcodes2,samples):
+  
+  myDict = {}
+  b1 = set(barcodes1)
+  b2 = set(barcodes2)
+  
+  # Set up the initial list:
+  for one in b1:
+      myDict[one] = {}
+      for two in b2:
+        myDict[one][two]=[]
+        
+  for s in range(0,len(samples)):
+    myDict[barcodes1[s]][barcodes2[s]] = samples[s]
+      
+  return myDict
+     
+  
 ## Testing: check out how many matches there are to various error tolerances in the first qseq file
 #infile=open('s_2_2_1101_qseq.txt','r')
 #reader=csv.reader(infile,delimiter='\t')
