@@ -1,20 +1,12 @@
 #!/usr/bin/env python
 """Convert output solexa qseq files into fastq format, handling multiplexing.
 
-Works with qseq output from Illumina's on-machine base caller in:
-Data/Intensities/BaseCalls/
-or from the offline base caller in:
-Data/*_Firecrest*/Bustard*
+Works with qseq output from Illumina's on-machine base caller
 
 Usage:
-    solexa_qseq_to_fastq.py <run name> <list of lane numbers> <target file name>
+    solexa_qseq_to_fastq.py <run name>  <target file name>
 
-The lane numbers should be separated by commas, so to build fastq files for all
-lanes, you should pass:
-
-    1,2,3,4,5,6,7,8
-
-Output files will be in the fastq directory as <lane>_<run_name>_fastq.txt
+Output files will be in the fastq directory as <run_name>_<sample>_l<lane>[_1/2].fastq
 
 Illumina barcoded samples contain barcodes in a separate qseq lane, which are
 identified by being much shorter than the primary read. 
@@ -24,6 +16,7 @@ Optional arguments:
     --outdir (-o): Write out fastq files to different output directory; defaults
                    to a directory named fastq in the current directory.
 """
+
 from __future__ import with_statement
 import os
 import sys
@@ -53,32 +46,36 @@ def main(run_name, target_name, do_fail=False, outdir=None):
     for lane_num in list(set(lane_nums)):
         lane_prefix = "s_%s" % lane_num
         out_prefix = run_name
-        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2)
+        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num)
 
-def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2):
+def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num):
+
     bc_len = len(barcodes[0])
     bc2_len = len(barcodes2[0])
     qseq_files = glob.glob("%s_*qseq.txt" % lane_prefix)
     one_files, two_files, bc_files, bc2_files = _split_paired(qseq_files)
     is_paired = len(two_files) > 0
     is_double_bc = len(bc2_files) > 0
-    out_files = (_get_outfiles(out_prefix, outdir, is_paired, samples)
+
+    out_files = (_get_outfiles(out_prefix, outdir, is_paired, samples,lane_num)
                  if not fail_dir else None)
-    fail_files = (_get_outfiles(out_prefix, fail_dir, is_paired, samples)
+    fail_files = (_get_outfiles(out_prefix, fail_dir, is_paired, samples, lane_num)
                   if fail_dir else None)
-    bc_map = create_barcode_map(barcodes,barcodes2)
+    bc_map = create_barcode_map(barcodes,barcodes2,samples)
+
     if not fail_files:
-        ambig_seqs = open("ambiguous_seqs.fastq","w")
-	ambig_seqs2 = open("ambiguous_seqs2.fastq","w")
-        ambig_bcs = open("ambiguous_bcs.fastq","w")
+      ambig_seqs = open(os.path.join(outdir, "ambiguous_seqs_l%s.fastq" %(lane_num)),"w")
+      ambig_seqs2 = open(os.path.join(outdir, "ambiguous_seqs2_l%s.fastq" %(lane_num)),"w")
+      ambig_bcs = open(os.path.join(outdir, "ambiguous_bcs_l%s.fastq" %(lane_num)),"w")
     else:
-        ambig_seqs = open("failed_ambig_seqs.fastq","w")
-	ambig_seqs2 = open("ambiguous_seqs2.fastq","w")
-        ambig_bcs = open("failed_ambig_bcs.fastq","w")
+      ambig_seqs = open(os.path.join(outdir, "failed_ambig_seqs_l%s.fastq"%(lane_num)),"w")
+      ambig_seqs2 = open(os.path.join(outdir, "failed_ambig_seqs2_l%s.fastq"%(lane_num)),"w")
+      ambig_bcs = open(os.path.join(outdir, "failed_ambig_bcs_l%s.fastq"%(lane_num)),"w")
+      
     for (num, files) in [("1", one_files), ("2", two_files)]:
         for i, fname in enumerate(files):
-            bc_file = _get_associated_barcode(i, fname, bc_files, is_double_bc)
-	    bc2_file = _get_associated_barcode(i ,fname, bc2_files, is_double_bc)
+            bc_file = _get_associated_barcode(i, fname, bc_files)
+            bc2_file = _get_associated_barcode(i ,fname, bc2_files)
             convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len,  fail_files)
 
 def _get_associated_barcode(file_num, fname, bc_files):
@@ -94,39 +91,47 @@ def _get_associated_barcode(file_num, fname, bc_files):
     return None
 
 def convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len, fail_files=None):
-    """Convert a qseq file into the appropriate fastq output.
-    """
-    bc_iterator = _qseq_iterator(bc_file, fail_files is None) if bc_file else None
-    bc2_iterator = _qseq_iterator(bc2_file, fail_files is None) if bc2_file else None
-    for basename, seq, qual, passed in _qseq_iterator(fname, fail_files is None):
-        # if we have barcodes, add them to the 3' end of the sequence
-        if bc_iterator:
-            (_, bc_seq, _, _) = bc_iterator.next()
-	bc2_seq = []
-	if bc2_iterator:
+  """Convert a qseq file into the appropriate fastq output.
+  """
+  
+  bc_iterator = _qseq_iterator(bc_file, fail_files is None) if bc_file else None
+  bc2_iterator = _qseq_iterator(bc2_file, fail_files is None) if bc2_file else None
+  
+  for basename, seq, qual, passed in _qseq_iterator(fname, fail_files is None):
+    if bc_iterator:
+      (_, bc_seq, _, _) = bc_iterator.next()
+    
+    bc2_seq = []
+    if bc2_iterator:
 	    (_, bc2_seq, _, _) = bc2_iterator.next()
-	    full_seq = "%s\t%s" % (bc_seq[0:bc_len], bc2_seq[0:bc2_len])
-        name = "%s/%s" % (basename, num)
-        out = "@%s\n%s\n+\n%s\n" % (name, seq, qual)
-	my_index = get_sample_index(bc_seq[0:bc_len], bc2_seq[0:bc2_len], bc_map)       
-	if passed:
-            if not my_index ==[]:
-                out_files[num][my_index].write(out)
-            elif not fail_files:
-		if num = "1"
-                	ambig_seqs.write(out)
-			ambig_bcs.write(full_seq+"\n")
-		elif num = "2"
-			ambig_seqs2.write(out)
-        elif fail_files:
-            if not my_index == []:
-                fail_files[num][my_index].write(out)
-            else:
-                if num = "1"
-                	ambig_seqs.write(out)
-			ambig_bcs.write(full_seq+"\n")
-		elif num = "2"
-			ambig_seqs2.write(out)
+	    
+    BC_SEQ =  bc_seq[0:bc_len]
+    BC2_SEQ = bc2_seq[0:bc2_len] if bc2_file else []
+	    
+    full_seq = "%s\t%s" % (BC_SEQ,BC2_SEQ)
+    name = "%s/%s" % (basename, num)
+    out = "@%s\n%s\n+\n%s\n" % (name, seq, qual)
+  	
+    my_index = get_sample_index(BC_SEQ, BC2_SEQ, bc_map)       
+  
+    if passed:
+      if not my_index ==[]:
+        out_files[num][my_index].write(out)
+      elif not fail_files:
+        if num == "1":
+          ambig_seqs.write(out)
+          ambig_bcs.write(full_seq+"\n")
+        elif num == "2":
+          ambig_seqs2.write(out)
+    elif fail_files:
+      if not my_index == []:
+        fail_files[num][my_index].write(out)
+      else:
+        if num == "1":
+          ambig_seqs.write(out)
+          ambig_bcs.write(full_seq+"\n")
+        elif num == "2":
+          ambig_seqs2.write(out)
 
 def _qseq_iterator(fname, pass_wanted):
     """Return the name, sequence, quality, and pass info of qseq reads.
@@ -146,19 +151,20 @@ def _qseq_iterator(fname, pass_wanted):
                 assert len(seq) == len(qual)
                 yield name, seq, qual, passed
 
-def _get_outfiles(out_prefix, outdir, has_paired_files, samples):
+def _get_outfiles(out_prefix, outdir, has_paired_files, samples,lane_num):
     out_files = {}
     if has_paired_files:
         for num in ("1", "2"):
             out_files[num] = []
             for sample in samples:
-                out_files[num].append(os.path.join(outdir, "%s_%s_%s_fastq.txt" % (
-                    out_prefix, sample, num)))
+                out_files[num].append(os.path.join(outdir, "%s_%s_l%s_%s.fastq" % (
+                    out_prefix, sample, lane_num,num)))
     else:
         out_files["1"] = []
         for sample in samples:
-            out_files["1"].append(os.path.join(outdir, "%s_%s_fastq.txt" % (
-                out_prefix, sample)))
+            out_files["1"].append(os.path.join(outdir, "%s_%s_l%s.fastq" % (
+                out_prefix, sample,lane_num)))
+                
     for index, flist in out_files.items():
         out_files[index] = [open(fname, "w") for fname in out_files[index]]
     return out_files
