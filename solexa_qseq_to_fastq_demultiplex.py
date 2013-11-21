@@ -64,13 +64,13 @@ def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,bar
     bc_map = create_barcode_map(barcodes,barcodes2,samples)
 
     if not fail_files:
-      ambig_seqs = open(os.path.join(outdir, "ambiguous_seqs_l%s.fastq" %(lane_num)),"w")
-      ambig_seqs2 = open(os.path.join(outdir, "ambiguous_seqs2_l%s.fastq" %(lane_num)),"w")
-      ambig_bcs = open(os.path.join(outdir, "ambiguous_bcs_l%s.fastq" %(lane_num)),"w")
+      ambig_seqs = open(os.path.join(outdir, "%sambiguous_seqs_l%s.fastq" %(out_prefix,lane_num)),"w")
+      ambig_seqs2 = open(os.path.join(outdir, "%sambiguous_seqs2_l%s.fastq" %(out_prefix,lane_num)),"w")
+      ambig_bcs = open(os.path.join(outdir, "%sambiguous_bcs_l%s.fastq" %(out_prefix,lane_num)),"w")
     else:
-      ambig_seqs = open(os.path.join(outdir, "failed_ambig_seqs_l%s.fastq"%(lane_num)),"w")
-      ambig_seqs2 = open(os.path.join(outdir, "failed_ambig_seqs2_l%s.fastq"%(lane_num)),"w")
-      ambig_bcs = open(os.path.join(outdir, "failed_ambig_bcs_l%s.fastq"%(lane_num)),"w")
+      ambig_seqs = open(os.path.join(outdir, "%sfailed_ambig_seqs_l%s.fastq"%(out_prefix,lane_num)),"w")
+      ambig_seqs2 = open(os.path.join(outdir, "%sfailed_ambig_seqs2_l%s.fastq"%(out_prefix,lane_num)),"w")
+      ambig_bcs = open(os.path.join(outdir, "%sfailed_ambig_bcs_l%s.fastq"%(out_prefix,lane_num)),"w")
       
     for (num, files) in [("1", one_files), ("2", two_files)]:
         for i, fname in enumerate(files):
@@ -152,20 +152,24 @@ def _qseq_iterator(fname, pass_wanted):
                 yield name, seq, qual, passed
 
 def _get_outfiles(out_prefix, outdir, has_paired_files, samples,lane_num):
+
     out_files = {}
     if has_paired_files:
         for num in ("1", "2"):
             out_files[num] = []
             for sample in samples:
-                out_files[num].append(os.path.join(outdir, "%s_%s_l%s_%s.fastq" % (
+                out_files[num].append(os.path.join(outdir, "%s%s_l%s_%s.fastq" % (
                     out_prefix, sample, lane_num,num)))
     else:
         out_files["1"] = []
         for sample in samples:
-            out_files["1"].append(os.path.join(outdir, "%s_%s_l%s.fastq" % (
+            out_files["1"].append(os.path.join(outdir, "%s%s_l%s.fastq" % (
                 out_prefix, sample,lane_num)))
                 
     for index, flist in out_files.items():
+        for fname in out_files[index]:
+          if os.path.isfile(fname)
+            raise ValueError("File exists: %s" % fname) 
         out_files[index] = [open(fname, "w") for fname in out_files[index]]
     return out_files
 
