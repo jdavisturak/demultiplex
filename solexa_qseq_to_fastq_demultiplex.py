@@ -168,7 +168,7 @@ def _get_outfiles(out_prefix, outdir, has_paired_files, samples,lane_num):
                 
     for index, flist in out_files.items():
         for fname in out_files[index]:
-          if os.path.isfile(fname)
+          if os.path.isfile(fname):
             raise ValueError("File exists: %s" % fname) 
         out_files[index] = [open(fname, "w") for fname in out_files[index]]
     return out_files
