@@ -4,17 +4,17 @@
 Works with qseq output from Illumina's on-machine base caller
 
 Usage:
-    solexa_qseq_to_fastq.py <run name>  <target file name>
+    solexa_qseq_to_fastq.py <run name>  <target file name> -o <outdir>
 
-Output files will be in the fastq directory as <run_name>_<sample>_l<lane>[_1/2].fastq
+Output files will be in the <outdir> directory as <run_name><sample>_l<lane>[_1/2].fastq
 
 Illumina barcoded samples contain barcodes in a separate qseq lane, which are
 identified by being much shorter than the primary read. 
 
 Optional arguments:
     --failed (-f): Write out reads failing the Illumina quality checks instead.
-    --outdir (-o): Write out fastq files to different output directory; defaults
-                   to a directory named fastq in the current directory.
+    --reverse (-r): reverse-complement reads before sending to the fastq file?
+    
 """
 
 from __future__ import with_statement
@@ -22,9 +22,11 @@ import os
 import sys
 import glob
 from optparse import OptionParser
+from Bio.Seq import Seq
+from Bio.Alphabet import generic_dna
 from demultiplex import *
 
-def main(run_name, target_name, do_fail=False, outdir=None):
+def main(run_name, target_name, do_fail=False, outdir=None, reverse=False,RevBarcodes=False):
     assert os.path.exists(target_name)
     if outdir is None:
         outdir = os.path.join(os.getcwd(), "fastq")
@@ -42,16 +44,29 @@ def main(run_name, target_name, do_fail=False, outdir=None):
                 assert os.path.isdir(fail_dir)
     else:
         fail_dir = None
-    samples, barcodes, barcodes2, lane_nums = read_targets(filename=target_name)
-    for lane_num in list(set(lane_nums)):
+    targets = read_targets(filename=target_name)
+    barcodes2 = []
+    for lane_num in list(set(targets[:,1])):
+        print "Demultiplexing lane %s" % lane_num
         lane_prefix = "s_%s" % lane_num
         out_prefix = run_name
-        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num)
+        samples = [target[0] for target in targets[targets[:,1]==lane_num]]
+        barcodes = [target[2] for target in targets[targets[:,1]==lane_num]]
+        
+        if RevBarcodes:
+            barcodes = [str(Seq(b, generic_dna).reverse_complement()) for b in barcodes]
 
-def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num):
+        if (targets.shape[1] > 3):
+            barcodes2 = [target[3] for target in targets[targets[:,1]==lane_num]]
+            if RevBarcodes:
+                barcodes2 = [str(Seq(b, generic_dna).reverse_complement()) for b in barcodes2]
+
+        write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num, reverse)
+
+def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,barcodes,barcodes2, lane_num, reverse=False):
 
     bc_len = len(barcodes[0])
-    bc2_len = len(barcodes2[0])
+    bc2_len = len(barcodes2[0]) if barcodes2 else None
     qseq_files = glob.glob("%s_*qseq.txt" % lane_prefix)
     one_files, two_files, bc_files, bc2_files = _split_paired(qseq_files)
     is_paired = len(two_files) > 0
@@ -76,7 +91,7 @@ def write_lane(lane_prefix, out_prefix, outdir, fail_dir,target_name,samples,bar
         for i, fname in enumerate(files):
             bc_file = _get_associated_barcode(i, fname, bc_files)
             bc2_file = _get_associated_barcode(i ,fname, bc2_files)
-            convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len,  fail_files)
+            convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len,  fail_files, reverse)
 
 def _get_associated_barcode(file_num, fname, bc_files):
     """Get barcodes for the first read if present.
@@ -90,7 +105,7 @@ def _get_associated_barcode(file_num, fname, bc_files):
         return bc_file
     return None
 
-def convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len, fail_files=None):
+def convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambig_seqs, ambig_seqs2, ambig_bcs, bc_len, bc2_len, fail_files=None, reverse=False):
   """Convert a qseq file into the appropriate fastq output.
   """
   
@@ -98,6 +113,13 @@ def convert_qseq_to_fastq(fname, num, bc_file, bc2_file, out_files, bc_map, ambi
   bc2_iterator = _qseq_iterator(bc2_file, fail_files is None) if bc2_file else None
   
   for basename, seq, qual, passed in _qseq_iterator(fname, fail_files is None):
+    if reverse:
+        # reverse quality string
+        qual = qual[::-1] 
+        # reverse COMPLEMENT DNA string
+        seq = str(Seq(seq, generic_dna).reverse_complement())
+
+
     if bc_iterator:
       (_, bc_seq, _, _) = bc_iterator.next()
     
@@ -229,9 +251,13 @@ if __name__ == "__main__":
                       default=False)
     parser.add_option("-o", "--outdir", dest="outdir", action="store",
                       default=None)
+    parser.add_option("-r", "--reverse", dest="reverse", action="store_true",
+                      default=None)
+    parser.add_option("-R", "--RevBarcodes", dest="RevBarcodes", action="store_true",
+                      default=None)
     (options, args) = parser.parse_args()
     if len(args) < 2:
         print __doc__
         sys.exit()
-    main(args[0], args[1], options.do_fail, options.outdir)
+    main(args[0], args[1], options.do_fail, options.outdir, options.reverse, options.RevBarcodes)
 

@@ -51,7 +51,11 @@ def read_targets(filename='targets.txt',samples_name='Sample', barcodes_name='Ba
   assert all(len(x) == len(barcodes[0]) for x in barcodes)
   assert all(len(x) == len(barcodes2[0]) for x in barcodes2)
   
-  return(samples,barcodes,barcodes2,lanes)
+  if barcodes2:
+    targets = np.array([samples,lanes,barcodes,barcodes2]).transpose()
+  else:
+    targets = np.array([samples,lanes,barcodes]).transpose()
+  return(targets)
 
 
 def find_barcode(kmer, barcodes, max_distance, Map):
@@ -75,6 +79,13 @@ def find_barcode(kmer, barcodes, max_distance, Map):
     
 ### Create dictionary:
 def create_barcode_dictionary(barcodes, max_distance=2):
+
+  print barcodes
+ 
+  if not barcodes:
+      return None
+  print "calculating Hamming distances"
+
   # Generate kmers                                    
   num = len(barcodes[0]);
   kmers = generate_Kmers(num=num)
